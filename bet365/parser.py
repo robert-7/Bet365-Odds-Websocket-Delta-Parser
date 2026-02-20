@@ -1,4 +1,5 @@
-from .constants import ProtocolConstants, Delimiters
+from .constants import Delimiters
+from .constants import ProtocolConstants
 
 class Bet365Parser:
     """
@@ -25,7 +26,7 @@ class Bet365Parser:
         for part in parts:
             if not part:
                 continue
-            
+
             # Check for numeric type like "100" (Connection/Config)
             if part.startswith("100" + Delimiters.FIELD):
                 parsed_data.append({"type": "CONFIG_100", "payload": part[4:]})
@@ -44,7 +45,7 @@ class Bet365Parser:
                     "topic": topic,
                     "data": data
                 })
-                
+
             elif msg_type_char == ProtocolConstants.DELTA: # \x15 - Delta Update
                  # Structure: \x15{Topic}\x01{Diff}
                 split_payload = payload.split(Delimiters.RECORD, 1)
@@ -58,8 +59,8 @@ class Bet365Parser:
 
             elif msg_type_char == ProtocolConstants.HANDSHAKE:
                 parsed_data.append({"type": "HANDSHAKE_RESPONSE", "payload": payload})
-                
+
             else:
                 parsed_data.append({"type": "UNKNOWN", "raw": part, "char_code": ord(msg_type_char)})
-                
+
         return parsed_data

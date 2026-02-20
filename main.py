@@ -1,6 +1,7 @@
 import asyncio
-import os
 import logging
+import os
+
 from dotenv import load_dotenv
 
 from bet365 import Bet365Client
@@ -30,4 +31,4 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("\nStopped.")
+        logger.info("Stopped due to keyboard interrupt.")

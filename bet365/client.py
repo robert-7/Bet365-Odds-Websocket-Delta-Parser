@@ -1,9 +1,10 @@
 import asyncio
 import logging
+
 import websockets
 
-from .parser import Bet365Parser
 from .config import Config
+from .parser import Bet365Parser
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,7 @@ class Bet365Client:
                 message = await websocket.recv()
                 # Parse the message
                 parsed_messages = Bet365Parser.parse_message(message)
-                
+
                 for pm in parsed_messages:
                     if pm['type'] == 'CONFIG_100':
                          logger.info(f"[CONFIG] Payload: {pm['payload']}")
