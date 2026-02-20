@@ -4,7 +4,7 @@ import logging
 from dotenv import load_dotenv
 import websockets
 
-from constants import ProtocolConstants, Delimiters
+from bet365 import Bet365Parser
 
 # Configure logging
 logging.basicConfig(
@@ -27,62 +27,6 @@ UA = (
     "Chrome/145.0.0.0 Safari/537.36"
 )
 
-def create_handshake_message(session_id):
-    """
-    Format: \x23\x03P\x01__time,S_{session_id}\x00
-    """
-    return f"{ProtocolConstants.HANDSHAKE}{Delimiters.HANDSHAKE}P{Delimiters.RECORD}__time,S_{session_id}{Delimiters.NULL}"
-
-def parse_message(message):
-    """
-    Parses the raw message string from the WebSocket.
-    """
-    # Messages can be concatenated with \x08
-    parts = message.split(Delimiters.MESSAGE)
-    parsed_data = []
-
-    for part in parts:
-        if not part:
-            continue
-        
-        # Check for numeric type like "100" (Connection/Config)
-        if part.startswith("100" + Delimiters.FIELD):
-            parsed_data.append({"type": "CONFIG_100", "payload": part[4:]})
-            continue
-
-        msg_type_char = part[0]
-        payload = part[1:]
-
-        if msg_type_char == ProtocolConstants.TOPIC_LOAD: # \x14 - Initial Topic Load
-            # Structure: \x14{Topic}\x01{Data}
-            split_payload = payload.split(Delimiters.RECORD, 1)
-            topic = split_payload[0]
-            data = split_payload[1] if len(split_payload) > 1 else ""
-            parsed_data.append({
-                "type": "TOPIC_LOAD",
-                "topic": topic,
-                "data": data
-            })
-            
-        elif msg_type_char == ProtocolConstants.DELTA: # \x15 - Delta Update
-             # Structure: \x15{Topic}\x01{Diff}
-            split_payload = payload.split(Delimiters.RECORD, 1)
-            topic = split_payload[0]
-            diff = split_payload[1] if len(split_payload) > 1 else ""
-            parsed_data.append({
-                "type": "DELTA",
-                "topic": topic,
-                "diff": diff
-            })
-
-        elif msg_type_char == ProtocolConstants.HANDSHAKE:
-            parsed_data.append({"type": "HANDSHAKE_RESPONSE", "payload": payload})
-            
-        else:
-            parsed_data.append({"type": "UNKNOWN", "raw": part, "char_code": ord(msg_type_char)})
-            
-    return parsed_data
-
 async def run():
     extra_headers = [
         ("Accept-Language", "en-CA,en-US;q=0.9,en;q=0.8")
@@ -98,7 +42,7 @@ async def run():
         logger.info("Connected to Bet365 WebSocket.")
 
         # Send Handshake immediately
-        handshake_msg = create_handshake_message(TSTK_COOKIE)
+        handshake_msg = Bet365Parser.create_handshake_message(TSTK_COOKIE)
         await websocket.send(handshake_msg)
         logger.debug(f"Sent handshake: {handshake_msg!r}")
 
@@ -106,7 +50,7 @@ async def run():
             try:
                 message = await websocket.recv()
                 # Parse the message
-                parsed_messages = parse_message(message)
+                parsed_messages = Bet365Parser.parse_message(message)
                 for pm in parsed_messages:
                     if pm['type'] == 'CONFIG_100':
                          logger.info(f"[CONFIG] Payload: {pm['payload']}")
