@@ -3,6 +3,7 @@ import logging
 import websockets
 
 from .parser import Bet365Parser
+from .config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -10,20 +11,12 @@ class Bet365Client:
     """
     A WebSocket client for connecting to the Bet365 zap-protocol-v1 endpoint.
     """
-    
-    ORIGIN = "https://www.on.bet365.ca"
-    SUBPROTOCOL = "zap-protocol-v1"
-    UA = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/145.0.0.0 Safari/537.36"
-    )
 
     def __init__(self, url: str, session_cookie: str):
         self.url = url
         self.session_cookie = session_cookie
         self.extra_headers = [
-            ("Accept-Language", "en-CA,en-US;q=0.9,en;q=0.8")
+            ("Accept-Language", Config.ACCEPT_LANGUAGE)
         ]
 
     async def connect(self):
@@ -33,9 +26,9 @@ class Bet365Client:
         try:
             async with websockets.connect(
                 uri=self.url,
-                origin=self.ORIGIN,
-                subprotocols=[self.SUBPROTOCOL],
-                user_agent_header=self.UA,
+                origin=Config.ORIGIN,
+                subprotocols=[Config.SUBPROTOCOL],
+                user_agent_header=Config.USER_AGENT,
                 additional_headers=self.extra_headers
             ) as websocket:
                 logger.info("Connected to Bet365 WebSocket.")
