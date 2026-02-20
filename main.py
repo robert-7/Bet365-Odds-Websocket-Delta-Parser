@@ -4,6 +4,8 @@ import logging
 from dotenv import load_dotenv
 import websockets
 
+from constants import ProtocolConstants, Delimiters
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -25,29 +27,18 @@ UA = (
     "Chrome/145.0.0.0 Safari/537.36"
 )
 
-# Protocol Constants
-path_sep = "\x14"   # (20) Topic Load
-delta_sep = "\x15"  # (21) Delta Update
-handshake_sep = "\x23" # (35) Handshake
-
-# Delimiters
-msg_del = "\x08"    # Message delimiter
-record_del = "\x01" # Record delimiter
-field_del = "\x02"  # Field delimiter
-
-
 def create_handshake_message(session_id):
     """
     Format: \x23\x03P\x01__time,S_{session_id}\x00
     """
-    return f"\x23\x03P\x01__time,S_{session_id}\x00"
+    return f"{ProtocolConstants.HANDSHAKE}{Delimiters.HANDSHAKE}P{Delimiters.RECORD}__time,S_{session_id}{Delimiters.NULL}"
 
 def parse_message(message):
     """
     Parses the raw message string from the WebSocket.
     """
     # Messages can be concatenated with \x08
-    parts = message.split(msg_del)
+    parts = message.split(Delimiters.MESSAGE)
     parsed_data = []
 
     for part in parts:
@@ -55,16 +46,16 @@ def parse_message(message):
             continue
         
         # Check for numeric type like "100" (Connection/Config)
-        if part.startswith("100" + field_del):
+        if part.startswith("100" + Delimiters.FIELD):
             parsed_data.append({"type": "CONFIG_100", "payload": part[4:]})
             continue
 
         msg_type_char = part[0]
         payload = part[1:]
 
-        if msg_type_char == path_sep: # \x14 - Initial Topic Load
+        if msg_type_char == ProtocolConstants.TOPIC_LOAD: # \x14 - Initial Topic Load
             # Structure: \x14{Topic}\x01{Data}
-            split_payload = payload.split(record_del, 1)
+            split_payload = payload.split(Delimiters.RECORD, 1)
             topic = split_payload[0]
             data = split_payload[1] if len(split_payload) > 1 else ""
             parsed_data.append({
@@ -73,9 +64,9 @@ def parse_message(message):
                 "data": data
             })
             
-        elif msg_type_char == delta_sep: # \x15 - Delta Update
+        elif msg_type_char == ProtocolConstants.DELTA: # \x15 - Delta Update
              # Structure: \x15{Topic}\x01{Diff}
-            split_payload = payload.split(record_del, 1)
+            split_payload = payload.split(Delimiters.RECORD, 1)
             topic = split_payload[0]
             diff = split_payload[1] if len(split_payload) > 1 else ""
             parsed_data.append({
@@ -84,7 +75,7 @@ def parse_message(message):
                 "diff": diff
             })
 
-        elif msg_type_char == handshake_sep:
+        elif msg_type_char == ProtocolConstants.HANDSHAKE:
             parsed_data.append({"type": "HANDSHAKE_RESPONSE", "payload": payload})
             
         else:
