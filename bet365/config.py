@@ -10,3 +10,4 @@ class Config:
         "Chrome/145.0.0.0 Safari/537.36"
     )
     ACCEPT_LANGUAGE = "en-CA,en-US;q=0.9,en;q=0.8"
+    STATE_SUMMARY_INTERVAL_SECONDS = 30

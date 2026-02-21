@@ -25,13 +25,23 @@ pip install -r requirements.txt
 
 ## Monitoring (Prometheus + Grafana)
 
-The app now exposes Prometheus metrics at `http://localhost:8000/metrics` by default.
+The app now exposes Prometheus metrics at `http://localhost:8001/metrics` by default.
+It also exposes read-only internal state at `http://localhost:8002/state`.
 
 ### Run the app
 
 ```shell
 source .venv/bin/activate
 python3 main.py
+```
+
+### View live internal state
+
+- Browser: `http://localhost:8002/state`
+- Curl:
+
+```shell
+curl -s http://localhost:8002/state | jq
 ```
 
 ### Start monitoring stack

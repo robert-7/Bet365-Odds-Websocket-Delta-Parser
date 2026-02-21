@@ -50,6 +50,81 @@ class OddsStateManager:
     stale_by_sequence: int = 0
     stale_by_topic_time: int = 0
 
+    def get_topic(self, topic: str) -> TopicState | None:
+        """
+        Return the current state for a single topic, or None if not found.
+        """
+        return self.topics.get(topic)
+
+    def get_topics(self) -> dict[str, TopicState]:
+        """
+        Return all topic states keyed by topic.
+        """
+        return self.topics
+
+    def snapshot(self) -> dict[str, Any]:
+        """
+        Return a JSON-serializable snapshot of manager and topic state.
+        """
+        topics_snapshot: dict[str, dict[str, Any]] = {}
+        for topic, topic_state in self.topics.items():
+            topics_snapshot[topic] = {
+                "topic": topic_state.topic,
+                "entities": topic_state.entities,
+                "raw_payload": topic_state.raw_payload,
+                "last_update_utc": topic_state.last_update_utc.isoformat(),
+                "update_count": topic_state.update_count,
+                "last_message_type": topic_state.last_message_type,
+                "last_seen_sequence": topic_state.last_seen_sequence,
+                "last_seen_topic_ts": topic_state.last_seen_topic_ts,
+                "stale_updates_dropped": topic_state.stale_updates_dropped,
+                "parse_errors": topic_state.parse_errors,
+                "last_error": topic_state.last_error,
+            }
+
+        return {
+            "handled_messages": self.handled_messages,
+            "ignored_messages": self.ignored_messages,
+            "unknown_types": self.unknown_types,
+            "delta_ops_applied": self.delta_ops_applied,
+            "delta_ops_skipped": self.delta_ops_skipped,
+            "delta_parse_errors": self.delta_parse_errors,
+            "out_of_order_dropped": self.out_of_order_dropped,
+            "missing_baseline_deltas": self.missing_baseline_deltas,
+            "malformed_messages": self.malformed_messages,
+            "stale_by_sequence": self.stale_by_sequence,
+            "stale_by_topic_time": self.stale_by_topic_time,
+            "topic_count": len(self.topics),
+            "topics": topics_snapshot,
+        }
+
+    def topic_summaries(self, limit: int = 5) -> list[dict[str, Any]]:
+        """
+        Return compact per-topic summaries ordered by most recently updated.
+        """
+        ordered_topics = sorted(
+            self.topics.values(),
+            key=lambda t: t.last_update_utc,
+            reverse=True,
+        )
+
+        summaries: list[dict[str, Any]] = []
+        for topic_state in ordered_topics[:limit]:
+            key_values = topic_state.entities.get("key_values", {}) if isinstance(topic_state.entities, dict) else {}
+            summaries.append(
+                {
+                    "topic": topic_state.topic,
+                    "update_count": topic_state.update_count,
+                    "last_message_type": topic_state.last_message_type,
+                    "last_seen_topic_ts": topic_state.last_seen_topic_ts,
+                    "key_count": len(key_values) if isinstance(key_values, dict) else 0,
+                    "stale_updates_dropped": topic_state.stale_updates_dropped,
+                    "parse_errors": topic_state.parse_errors,
+                }
+            )
+
+        return summaries
+
     def apply_message(self, message: dict[str, Any]) -> None:
         """
         Public entry point for applying one parsed websocket message.

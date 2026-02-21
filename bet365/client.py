@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 
 import websockets
 
@@ -24,9 +25,28 @@ class Bet365Client:
         self.url = url
         self.session_cookie = session_cookie
         self.state_manager = OddsStateManager()
+        self._last_state_log_time = 0.0
         self.extra_headers = [
             ("Accept-Language", Config.ACCEPT_LANGUAGE)
         ]
+
+    def _maybe_log_state_summary(self) -> None:
+        now = time.monotonic()
+        if now - self._last_state_log_time < Config.STATE_SUMMARY_INTERVAL_SECONDS:
+            return
+
+        summary = self.state_manager.snapshot()
+        top_topics = self.state_manager.topic_summaries(limit=3)
+        logger.info(
+            "[STATE] topics=%s handled=%s ignored=%s unknown=%s stale_dropped=%s top=%s",
+            summary["topic_count"],
+            summary["handled_messages"],
+            summary["ignored_messages"],
+            summary["unknown_types"],
+            summary["out_of_order_dropped"],
+            top_topics,
+        )
+        self._last_state_log_time = now
 
     async def connect(self):
         """
@@ -88,6 +108,8 @@ class Bet365Client:
                         logger.info(f"[HANDSHAKE_ACK] {pm['payload']}")
                     else:
                         logger.warning(f"[UNKNOWN] {pm}")
+
+                self._maybe_log_state_summary()
 
             except websockets.ConnectionClosed as e:
                 logger.error(f"Connection closed: {e}. Reconnecting...")

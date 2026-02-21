@@ -198,6 +198,54 @@ class OddsStateManagerTests(unittest.TestCase):
         self.assertEqual(manager.malformed_messages, 1)
         self.assertEqual(manager.unknown_types, 1)
 
+    def test_query_methods_return_topic_and_snapshot(self):
+        manager = OddsStateManager()
+
+        manager.apply_message(
+            {
+                "type": "TOPIC_LOAD",
+                "topic": "__time",
+                "data": "F|IN;TI=20260220013254042;UF=55;|",
+            }
+        )
+
+        topic_state = manager.get_topic("__time")
+        self.assertIsNotNone(topic_state)
+        self.assertEqual(topic_state.topic, "__time")
+
+        topics = manager.get_topics()
+        self.assertIn("__time", topics)
+
+        snapshot = manager.snapshot()
+        self.assertEqual(snapshot["topic_count"], 1)
+        self.assertIn("topics", snapshot)
+        self.assertIn("__time", snapshot["topics"])
+        self.assertIn("last_update_utc", snapshot["topics"]["__time"])
+        self.assertEqual(snapshot["topics"]["__time"]["last_seen_topic_ts"], "20260220013254042")
+
+    def test_topic_summaries_orders_by_recent_update(self):
+        manager = OddsStateManager()
+
+        manager.apply_message(
+            {
+                "type": "TOPIC_LOAD",
+                "topic": "topic_a",
+                "data": "F|IN;TI=20260220013254041;A=1;|",
+            }
+        )
+        manager.apply_message(
+            {
+                "type": "TOPIC_LOAD",
+                "topic": "topic_b",
+                "data": "F|IN;TI=20260220013254042;B=2;|",
+            }
+        )
+
+        summaries = manager.topic_summaries(limit=1)
+        self.assertEqual(len(summaries), 1)
+        self.assertEqual(summaries[0]["topic"], "topic_b")
+        self.assertEqual(summaries[0]["key_count"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
