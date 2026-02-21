@@ -11,6 +11,7 @@ from .metrics import PARSE_ERRORS_TOTAL
 from .metrics import RECONNECTS_TOTAL
 from .metrics import TOPIC_MESSAGES_TOTAL
 from .parser import Bet365Parser
+from .state_manager import OddsStateManager
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ class Bet365Client:
     def __init__(self, url: str, session_cookie: str):
         self.url = url
         self.session_cookie = session_cookie
+        self.state_manager = OddsStateManager()
         self.extra_headers = [
             ("Accept-Language", Config.ACCEPT_LANGUAGE)
         ]
@@ -66,6 +68,7 @@ class Bet365Client:
                 for pm in parsed_messages:
                     message_type = pm.get("type", "UNKNOWN")
                     MESSAGES_TOTAL.labels(type=message_type).inc()
+                    self.state_manager.apply_message(pm)
 
                     if pm['type'] == 'CONFIG_100':
                          logger.info(f"[CONFIG] Payload: {pm['payload']}")
