@@ -42,8 +42,8 @@ class OddsStateManager:
         """
         message_type = message.get("type")
 
-        # TOPIC_LOAD carries a full snapshot for a topic. For now we store the
-        # raw payload and update topic metadata; normalization comes in Step 3.
+        # TOPIC_LOAD carries a full snapshot for a topic. We parse a structured
+        # snapshot and replace topic entities with this authoritative state.
         if message_type == "TOPIC_LOAD":
             topic = message.get("topic")
             data = message.get("data")
@@ -89,10 +89,18 @@ class OddsStateManager:
 
     def _apply_topic_load(self, topic: str, data: str) -> None:
         """
-        Step 2 behavior: store raw snapshot payload for the topic.
-        Step 3 will parse and normalize payload into entities.
+        Parse and apply a full topic snapshot.
+
+        TOPIC_LOAD is authoritative for the topic, so entities are replaced.
         """
         topic_state = self._ensure_topic(topic)
+        try:
+            topic_state.entities = self._parse_topic_load_snapshot(data)
+        except Exception as exc:
+            topic_state.entities = {
+                "_raw": data,
+                "_parse_error": str(exc),
+            }
         topic_state.raw_payload = data
         self._touch_topic(topic_state)
 
@@ -104,3 +112,54 @@ class OddsStateManager:
         topic_state = self._ensure_topic(topic)
         topic_state.raw_payload = diff
         self._touch_topic(topic_state)
+
+    def _parse_topic_load_snapshot(self, data: str) -> dict[str, Any]:
+        """
+        Parse a raw TOPIC_LOAD payload into a structured dictionary.
+
+        Current strategy intentionally parses a safe subset:
+        - split sections by '|'
+        - parse key/value tokens in each section (e.g., TI=..., UF=...)
+        - preserve unknown tokens for later protocol refinement
+        """
+        sections: list[dict[str, Any]] = []
+        key_values: dict[str, str] = {}
+
+        for raw_section in data.split("|"):
+            section_text = raw_section.strip()
+            if not section_text:
+                continue
+
+            section_values: dict[str, str] = {}
+            section_tokens: list[str] = []
+
+            for token in section_text.split(";"):
+                token_text = token.strip()
+                if not token_text:
+                    continue
+
+                if "=" in token_text:
+                    key, value = token_text.split("=", 1)
+                    key = key.strip()
+                    value = value.strip()
+                    if key:
+                        section_values[key] = value
+                        key_values[key] = value
+                    else:
+                        section_tokens.append(token_text)
+                else:
+                    section_tokens.append(token_text)
+
+            sections.append(
+                {
+                    "raw": section_text,
+                    "values": section_values,
+                    "tokens": section_tokens,
+                }
+            )
+
+        return {
+            "sections": sections,
+            "key_values": key_values,
+            "section_count": len(sections),
+        }

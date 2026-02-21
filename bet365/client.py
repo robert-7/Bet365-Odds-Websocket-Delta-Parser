@@ -76,6 +76,10 @@ class Bet365Client:
                         topic_class = classify_topic(pm["topic"])
                         TOPIC_MESSAGES_TOTAL.labels(topic_class=topic_class, topic=pm["topic"]).inc()
                         logger.info(f"[LOAD] Topic: {pm['topic']}")
+                        topic_state = self.state_manager.topics.get(pm["topic"])
+                        if topic_state is not None:
+                            section_count = topic_state.entities.get("section_count")
+                            logger.debug("[LOAD_PARSED] Topic: %s | Sections: %s", pm["topic"], section_count)
                     elif pm['type'] == 'DELTA':
                         topic_class = classify_topic(pm["topic"])
                         TOPIC_MESSAGES_TOTAL.labels(topic_class=topic_class, topic=pm["topic"]).inc()
