@@ -4,6 +4,12 @@ import logging
 import websockets
 
 from .config import Config
+from .metrics import classify_topic
+from .metrics import CONNECTION_UP
+from .metrics import MESSAGES_TOTAL
+from .metrics import PARSE_ERRORS_TOTAL
+from .metrics import RECONNECTS_TOTAL
+from .metrics import TOPIC_MESSAGES_TOTAL
 from .parser import Bet365Parser
 
 logger = logging.getLogger(__name__)
@@ -33,6 +39,7 @@ class Bet365Client:
                 additional_headers=self.extra_headers
             ) as websocket:
                 logger.info("Connected to Bet365 WebSocket.")
+                CONNECTION_UP.set(1)
 
                 # Send Handshake immediately after connecting to establish the session and keep the connection alive
                 handshake_msg = Bet365Parser.create_handshake_message(self.session_cookie)
@@ -43,6 +50,8 @@ class Bet365Client:
 
         except Exception as e:
             logger.error(f"Connection failed: {e}")
+            CONNECTION_UP.set(0)
+            RECONNECTS_TOTAL.inc()
 
     async def _listen(self, websocket):
         """
@@ -55,11 +64,18 @@ class Bet365Client:
                 parsed_messages = Bet365Parser.parse_message(message)
 
                 for pm in parsed_messages:
+                    message_type = pm.get("type", "UNKNOWN")
+                    MESSAGES_TOTAL.labels(type=message_type).inc()
+
                     if pm['type'] == 'CONFIG_100':
                          logger.info(f"[CONFIG] Payload: {pm['payload']}")
                     elif pm['type'] == 'TOPIC_LOAD':
+                        topic_class = classify_topic(pm["topic"])
+                        TOPIC_MESSAGES_TOTAL.labels(topic_class=topic_class, topic=pm["topic"]).inc()
                         logger.info(f"[LOAD] Topic: {pm['topic']}")
                     elif pm['type'] == 'DELTA':
+                        topic_class = classify_topic(pm["topic"])
+                        TOPIC_MESSAGES_TOTAL.labels(topic_class=topic_class, topic=pm["topic"]).inc()
                         logger.info(f"[DELTA] Topic: {pm['topic']} | Diff Len: {len(pm['diff'])}")
                     elif pm['type'] == 'HANDSHAKE_RESPONSE':
                         logger.info(f"[HANDSHAKE_ACK] {pm['payload']}")
@@ -68,4 +84,9 @@ class Bet365Client:
 
             except websockets.ConnectionClosed as e:
                 logger.error(f"Connection closed: {e}. Reconnecting...")
+                CONNECTION_UP.set(0)
+                RECONNECTS_TOTAL.inc()
                 break
+            except Exception as e:
+                logger.error(f"Error while processing websocket message: {e}")
+                PARSE_ERRORS_TOTAL.inc()

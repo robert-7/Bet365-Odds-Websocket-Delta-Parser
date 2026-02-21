@@ -8,6 +8,7 @@ repos:
     rev: v6.0.0
     hooks:
       - id: check-yaml
+      - id: requirements-txt-fixer
       - id: fix-byte-order-marker
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -36,3 +37,10 @@ repos:
     rev: v3.20.0
     hooks:
       - id: pyupgrade
+
+  # YAML linting
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.37.1
+    hooks:
+      - id: yamllint
+        entry: yamllint -c .yamllint.yaml --strict .
