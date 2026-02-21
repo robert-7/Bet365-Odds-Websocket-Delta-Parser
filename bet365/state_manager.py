@@ -35,6 +35,9 @@ class OddsStateManager:
     handled_messages: int = 0
     ignored_messages: int = 0
     unknown_types: int = 0
+    delta_ops_applied: int = 0
+    delta_ops_skipped: int = 0
+    delta_parse_errors: int = 0
 
     def apply_message(self, message: dict[str, Any]) -> None:
         """
@@ -96,20 +99,45 @@ class OddsStateManager:
         topic_state = self._ensure_topic(topic)
         try:
             topic_state.entities = self._parse_topic_load_snapshot(data)
-        except Exception as exc:
+        except Exception as e:
             topic_state.entities = {
                 "_raw": data,
-                "_parse_error": str(exc),
+                "_parse_error": str(e),
             }
         topic_state.raw_payload = data
         self._touch_topic(topic_state)
 
     def _apply_delta(self, topic: str, diff: str) -> None:
         """
-        Step 2 behavior: store latest raw delta payload for the topic.
-        Step 4 will parse delta operations and patch normalized entities.
+        Parse and apply incremental updates for an existing topic state.
+
+        Step 4 behavior patches the `entities["key_values"]` map with
+        upserts parsed from DELTA payloads, while preserving unknown tokens
+        for future protocol refinement.
         """
         topic_state = self._ensure_topic(topic)
+
+        if not isinstance(topic_state.entities, dict):
+            topic_state.entities = {}
+
+        key_values = topic_state.entities.get("key_values")
+        if not isinstance(key_values, dict):
+            key_values = {}
+            topic_state.entities["key_values"] = key_values
+
+        try:
+            delta_ops = self._parse_delta_operations(diff)
+            for key, value in delta_ops["upserts"].items():
+                key_values[key] = value
+                self.delta_ops_applied += 1
+
+            if delta_ops["unparsed_tokens"]:
+                topic_state.entities["delta_unparsed_tokens"] = delta_ops["unparsed_tokens"]
+                self.delta_ops_skipped += len(delta_ops["unparsed_tokens"])
+        except Exception as e:
+            self.delta_parse_errors += 1
+            topic_state.entities["delta_parse_error"] = str(e)
+
         topic_state.raw_payload = diff
         self._touch_topic(topic_state)
 
@@ -162,4 +190,43 @@ class OddsStateManager:
             "sections": sections,
             "key_values": key_values,
             "section_count": len(sections),
+        }
+
+    def _parse_delta_operations(self, diff: str) -> dict[str, Any]:
+        """
+        Parse a DELTA payload into patch operations.
+
+        Current safe subset:
+        - `key=value` tokens are treated as upserts to key-values state
+        - non `key=value` tokens are preserved as unparsed tokens
+        """
+        upserts: dict[str, str] = {}
+        unparsed_tokens: list[str] = []
+
+        for section in diff.split("|"):
+            section_text = section.strip()
+            if not section_text:
+                continue
+
+            for token in section_text.split(";"):
+                token_text = token.strip()
+                if not token_text:
+                    continue
+
+                if "=" not in token_text:
+                    unparsed_tokens.append(token_text)
+                    continue
+
+                key, value = token_text.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if not key:
+                    unparsed_tokens.append(token_text)
+                    continue
+
+                upserts[key] = value
+
+        return {
+            "upserts": upserts,
+            "unparsed_tokens": unparsed_tokens,
         }

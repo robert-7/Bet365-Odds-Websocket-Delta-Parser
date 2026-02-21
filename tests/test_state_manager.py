@@ -97,6 +97,71 @@ class OddsStateManagerTests(unittest.TestCase):
         self.assertEqual(second_state.update_count, 2)
         self.assertGreaterEqual(second_state.last_update_utc, first_update_ts)
 
+    def test_delta_patches_existing_key_values(self):
+        manager = OddsStateManager()
+
+        manager.apply_message(
+            {
+                "type": "TOPIC_LOAD",
+                "topic": "__time",
+                "data": "F|IN;TI=1;UF=55;|",
+            }
+        )
+
+        manager.apply_message(
+            {
+                "type": "DELTA",
+                "topic": "__time",
+                "diff": "IN;TI=2;NEW=abc;|",
+            }
+        )
+
+        topic_state = manager.topics["__time"]
+        self.assertEqual(topic_state.entities["key_values"]["TI"], "2")
+        self.assertEqual(topic_state.entities["key_values"]["UF"], "55")
+        self.assertEqual(topic_state.entities["key_values"]["NEW"], "abc")
+        self.assertGreaterEqual(manager.delta_ops_applied, 2)
+
+    def test_delta_before_topic_load_creates_topic_and_applies_upserts(self):
+        manager = OddsStateManager()
+
+        manager.apply_message(
+            {
+                "type": "DELTA",
+                "topic": "__time",
+                "diff": "TI=2;UF=55;",
+            }
+        )
+
+        self.assertIn("__time", manager.topics)
+        topic_state = manager.topics["__time"]
+        self.assertEqual(topic_state.entities["key_values"], {"TI": "2", "UF": "55"})
+
+    def test_delta_tracks_unparsed_tokens(self):
+        manager = OddsStateManager()
+
+        manager.apply_message(
+            {
+                "type": "TOPIC_LOAD",
+                "topic": "__time",
+                "data": "F|IN;TI=1;|",
+            }
+        )
+        manager.apply_message(
+            {
+                "type": "DELTA",
+                "topic": "__time",
+                "diff": "IN;FLAG;TI=3;",
+            }
+        )
+
+        topic_state = manager.topics["__time"]
+        self.assertEqual(topic_state.entities["key_values"]["TI"], "3")
+        self.assertIn("delta_unparsed_tokens", topic_state.entities)
+        self.assertIn("IN", topic_state.entities["delta_unparsed_tokens"])
+        self.assertIn("FLAG", topic_state.entities["delta_unparsed_tokens"])
+        self.assertGreaterEqual(manager.delta_ops_skipped, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
