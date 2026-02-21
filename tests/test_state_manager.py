@@ -162,6 +162,42 @@ class OddsStateManagerTests(unittest.TestCase):
         self.assertIn("FLAG", topic_state.entities["delta_unparsed_tokens"])
         self.assertGreaterEqual(manager.delta_ops_skipped, 2)
 
+    def test_stale_delta_by_topic_time_is_dropped(self):
+        manager = OddsStateManager()
+
+        manager.apply_message(
+            {
+                "type": "TOPIC_LOAD",
+                "topic": "__time",
+                "data": "F|IN;TI=20260221010101001;UF=55;|",
+            }
+        )
+
+        manager.apply_message(
+            {
+                "type": "DELTA",
+                "topic": "__time",
+                "diff": "TI=20260221010101000;UF=99;",
+            }
+        )
+
+        topic_state = manager.topics["__time"]
+        self.assertEqual(topic_state.entities["key_values"]["TI"], "20260221010101001")
+        self.assertEqual(topic_state.entities["key_values"]["UF"], "55")
+        self.assertEqual(topic_state.stale_updates_dropped, 1)
+        self.assertEqual(manager.out_of_order_dropped, 1)
+        self.assertEqual(manager.stale_by_topic_time, 1)
+        self.assertEqual(topic_state.last_error, "stale_by_topic_time")
+
+    def test_malformed_known_message_increments_malformed_counter(self):
+        manager = OddsStateManager()
+
+        manager.apply_message({"type": "DELTA", "topic": "__time"})
+
+        self.assertEqual(manager.handled_messages, 0)
+        self.assertEqual(manager.malformed_messages, 1)
+        self.assertEqual(manager.unknown_types, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

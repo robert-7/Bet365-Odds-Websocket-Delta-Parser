@@ -19,6 +19,12 @@ class TopicState:
     raw_payload: str | None = None
     last_update_utc: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     update_count: int = 0
+    last_message_type: str | None = None
+    last_seen_sequence: int | None = None
+    last_seen_topic_ts: str | None = None
+    stale_updates_dropped: int = 0
+    parse_errors: int = 0
+    last_error: str | None = None
 
 
 @dataclass
@@ -38,6 +44,11 @@ class OddsStateManager:
     delta_ops_applied: int = 0
     delta_ops_skipped: int = 0
     delta_parse_errors: int = 0
+    out_of_order_dropped: int = 0
+    missing_baseline_deltas: int = 0
+    malformed_messages: int = 0
+    stale_by_sequence: int = 0
+    stale_by_topic_time: int = 0
 
     def apply_message(self, message: dict[str, Any]) -> None:
         """
@@ -54,6 +65,7 @@ class OddsStateManager:
                 self._apply_topic_load(topic=topic, data=data)
                 self.handled_messages += 1
                 return
+            self.malformed_messages += 1
         # DELTA carries incremental updates for a topic. For now we store the
         # latest raw delta payload and update metadata; patch semantics come later.
         elif message_type == "DELTA":
@@ -63,6 +75,7 @@ class OddsStateManager:
                 self._apply_delta(topic=topic, diff=diff)
                 self.handled_messages += 1
                 return
+            self.malformed_messages += 1
         # CONFIG_100 and HANDSHAKE_RESPONSE are connection/control-plane events,
         # not odds/topic state updates, so we intentionally ignore them for now.
         elif message_type in {"CONFIG_100", "HANDSHAKE_RESPONSE"}:
@@ -90,6 +103,61 @@ class OddsStateManager:
         topic_state.last_update_utc = datetime.now(timezone.utc)
         topic_state.update_count += 1
 
+    def _record_applied_update(
+        self,
+        topic_state: TopicState,
+        message_type: str,
+        sequence: int | None,
+        topic_ts: str | None,
+    ) -> None:
+        topic_state.last_message_type = message_type
+        if sequence is not None:
+            topic_state.last_seen_sequence = sequence
+        if topic_ts is not None:
+            topic_state.last_seen_topic_ts = topic_ts
+        topic_state.last_error = None
+        self._touch_topic(topic_state)
+
+    def _drop_as_stale(self, topic_state: TopicState, reason: str) -> None:
+        topic_state.stale_updates_dropped += 1
+        topic_state.last_error = reason
+        self.out_of_order_dropped += 1
+
+    def _should_apply_update(
+        self,
+        topic_state: TopicState,
+        sequence: int | None,
+        topic_ts: str | None,
+    ) -> tuple[bool, str | None]:
+        if sequence is not None and topic_state.last_seen_sequence is not None:
+            if sequence <= topic_state.last_seen_sequence:
+                self.stale_by_sequence += 1
+                return False, "stale_by_sequence"
+
+        if topic_ts is not None and topic_state.last_seen_topic_ts is not None:
+            if topic_ts <= topic_state.last_seen_topic_ts:
+                self.stale_by_topic_time += 1
+                return False, "stale_by_topic_time"
+
+        return True, None
+
+    def _extract_topic_ts(self, key_values: dict[str, str]) -> str | None:
+        topic_ts = key_values.get("TI")
+        if isinstance(topic_ts, str) and topic_ts:
+            return topic_ts
+        return None
+
+    def _extract_sequence(self, key_values: dict[str, str]) -> int | None:
+        for key in ("SEQ", "SN", "SE"):
+            raw = key_values.get(key)
+            if not isinstance(raw, str) or not raw:
+                continue
+            try:
+                return int(raw)
+            except ValueError:
+                continue
+        return None
+
     def _apply_topic_load(self, topic: str, data: str) -> None:
         """
         Parse and apply a full topic snapshot.
@@ -98,14 +166,37 @@ class OddsStateManager:
         """
         topic_state = self._ensure_topic(topic)
         try:
-            topic_state.entities = self._parse_topic_load_snapshot(data)
+            parsed_snapshot = self._parse_topic_load_snapshot(data)
+            key_values = parsed_snapshot.get("key_values", {})
+            if not isinstance(key_values, dict):
+                key_values = {}
+
+            sequence = self._extract_sequence(key_values)
+            topic_ts = self._extract_topic_ts(key_values)
+            should_apply, reason = self._should_apply_update(topic_state, sequence, topic_ts)
+            if not should_apply and reason is not None:
+                self._drop_as_stale(topic_state, reason)
+                return
+
+            topic_state.entities = parsed_snapshot
         except Exception as e:
+            self.malformed_messages += 1
+            topic_state.parse_errors += 1
             topic_state.entities = {
                 "_raw": data,
                 "_parse_error": str(e),
             }
+            topic_state.last_error = str(e)
+            self._touch_topic(topic_state)
+            return
+
         topic_state.raw_payload = data
-        self._touch_topic(topic_state)
+        self._record_applied_update(
+            topic_state=topic_state,
+            message_type="TOPIC_LOAD",
+            sequence=sequence,
+            topic_ts=topic_ts,
+        )
 
     def _apply_delta(self, topic: str, diff: str) -> None:
         """
@@ -115,7 +206,10 @@ class OddsStateManager:
         upserts parsed from DELTA payloads, while preserving unknown tokens
         for future protocol refinement.
         """
+        is_new_topic = topic not in self.topics
         topic_state = self._ensure_topic(topic)
+        if is_new_topic:
+            self.missing_baseline_deltas += 1
 
         if not isinstance(topic_state.entities, dict):
             topic_state.entities = {}
@@ -127,6 +221,14 @@ class OddsStateManager:
 
         try:
             delta_ops = self._parse_delta_operations(diff)
+
+            sequence = self._extract_sequence(delta_ops["upserts"])
+            topic_ts = self._extract_topic_ts(delta_ops["upserts"])
+            should_apply, reason = self._should_apply_update(topic_state, sequence, topic_ts)
+            if not should_apply and reason is not None:
+                self._drop_as_stale(topic_state, reason)
+                return
+
             for key, value in delta_ops["upserts"].items():
                 key_values[key] = value
                 self.delta_ops_applied += 1
@@ -136,10 +238,20 @@ class OddsStateManager:
                 self.delta_ops_skipped += len(delta_ops["unparsed_tokens"])
         except Exception as e:
             self.delta_parse_errors += 1
+            self.malformed_messages += 1
+            topic_state.parse_errors += 1
             topic_state.entities["delta_parse_error"] = str(e)
+            topic_state.last_error = str(e)
+            self._touch_topic(topic_state)
+            return
 
         topic_state.raw_payload = diff
-        self._touch_topic(topic_state)
+        self._record_applied_update(
+            topic_state=topic_state,
+            message_type="DELTA",
+            sequence=sequence,
+            topic_ts=topic_ts,
+        )
 
     def _parse_topic_load_snapshot(self, data: str) -> dict[str, Any]:
         """
