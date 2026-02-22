@@ -1,0 +1,13 @@
+---
+apiVersion: 1
+
+providers:
+  - name: Bet365 Dashboards
+    orgId: 1
+    folder: Bet365
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards
