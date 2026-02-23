@@ -1,0 +1,25 @@
+flowchart TD
+    A[WebSocket frame received] --> B[Bet365Parser.parse_message]
+    B --> C{Parsed message type}
+
+    C -->|CONFIG_100| D[Count metric and ignore for state]
+    C -->|HANDSHAKE_RESPONSE| E[Log ack and ignore for state]
+    C -->|TOPIC_LOAD| F[StateManager _apply_topic_load]
+    C -->|DELTA| G[StateManager _apply_delta]
+    C -->|UNKNOWN| H[Track unknown type]
+
+    F --> I[Parse sections and key=value tokens]
+    I --> J{Stale by sequence or TI?}
+    J -->|No| K[Replace topic entities]
+    J -->|Yes| L[Drop update as stale]
+
+    G --> M[Parse diff tokens into upserts]
+    M --> N{Stale by sequence or TI?}
+    N -->|No| O[Patch entities.key_values]
+    N -->|Yes| P[Drop delta as stale]
+
+    K --> Q[Update topic metadata and counters]
+    O --> Q
+    D --> Q
+    E --> Q
+    H --> Q
