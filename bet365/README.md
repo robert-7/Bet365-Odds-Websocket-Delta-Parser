@@ -93,11 +93,11 @@ Manager-level counters aggregate behavior across all topics (handled/ignored/unk
 flowchart LR
     subgraph Runtime
         WS[Bet365 WebSocket]
-        C[client.py\nBet365Client]
-        P[parser.py\nBet365Parser]
-        S[state_manager.py\nOddsStateManager]
-        M[metrics.py\nPrometheus metrics]
-        API[state_server.py\n/state endpoint]
+        C[client.py<br/>Bet365Client]
+        P[parser.py<br/>Bet365Parser]
+        S[state_manager.py<br/>OddsStateManager]
+        M[metrics.py<br/>Prometheus metrics]
+        API[state_server.py<br/>/state endpoint]
     end
 
     WS --> C

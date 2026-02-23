@@ -16,13 +16,13 @@ For a deeper module-level breakdown, see `bet365/README.md`.
 
 ```mermaid
 flowchart TD
-    A[Bet365 WebSocket Server] --> B[Bet365Client\nclient.py]
-    B --> C[Bet365Parser\nparser.py]
+    A[Bet365 WebSocket Server] --> B[Bet365Client<br/>client.py]
+    B --> C[Bet365Parser<br/>parser.py]
     C --> B
-    B --> D[OddsStateManager\nstate_manager.py]
-    B --> E[Prometheus Metrics\nmetrics.py -> /metrics]
-    D --> F[State HTTP Server\nstate_server.py -> /state]
-    G[Grafana + Prometheus\ndocker-compose] --> E
+    B --> D[OddsStateManager<br/>state_manager.py]
+    B --> E[Prometheus Metrics<br/>metrics.py -> /metrics]
+    D --> F[State HTTP Server<br/>state_server.py -> /state]
+    G[Grafana + Prometheus<br/>docker-compose] --> E
 ```
 
 ### Message Handling Summary
