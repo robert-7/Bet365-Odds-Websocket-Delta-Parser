@@ -7,7 +7,7 @@ If you're new to the protocol, the key idea is:
 - `TOPIC_LOAD` gives a full snapshot for a topic (baseline state).
 - `DELTA` gives incremental updates for that topic (patches).
 - control-plane messages (`CONFIG_100`, handshake responses) are tracked but not applied to topic state.
-- a periodic heartbeat keepalive is sent after connect to keep the websocket session active.
+- an initial keepalive handshake is sent after connect; periodic app-level heartbeat is configurable and disabled by default.
 
 ## What Message Types Are We Listening To
 
@@ -60,7 +60,7 @@ flowchart TD
 - `client.py`
     - Owns the websocket lifecycle (connect, listen, reconnect/error counters).
     - Sends the initial handshake built by `Bet365Parser.create_handshake_message(...)`.
-    - Runs a periodic heartbeat loop (same keepalive payload) using `Config.HEARTBEAT_INTERVAL_SECONDS`.
+    - Can run a periodic heartbeat loop (same keepalive payload) via `Config.ENABLE_PERIODIC_HEARTBEAT` and `Config.HEARTBEAT_INTERVAL_SECONDS`.
     - Parses each frame, emits metrics, and forwards parsed messages to `OddsStateManager.apply_message(...)`.
 - `parser.py`
     - Splits concatenated frame payloads (`\x08`) into individual protocol messages.

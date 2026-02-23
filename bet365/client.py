@@ -30,6 +30,7 @@ class Bet365Client:
         self.session_cookie = session_cookie
         self.state_manager = OddsStateManager()
         self._last_state_log_time = 0.0
+        self._last_heartbeat_monotonic: float | None = None
         self.extra_headers = [
             ("Accept-Language", Config.ACCEPT_LANGUAGE)
         ]
@@ -52,11 +53,18 @@ class Bet365Client:
         )
         self._last_state_log_time = now
 
-    async def _send_heartbeat(self, websocket) -> None:
+    async def _send_heartbeat(self, websocket, source: str) -> None:
         heartbeat_msg = Bet365Parser.create_handshake_message(self.session_cookie)
         await websocket.send(heartbeat_msg)
         HEARTBEATS_SENT_TOTAL.inc()
         HEARTBEAT_LAST_SENT_UNIX.set(time.time())
+        self._last_heartbeat_monotonic = time.monotonic()
+        logger.info(
+            "[HEARTBEAT] Sent keepalive (%s) | payload_len=%s | prefix=%r",
+            source,
+            len(heartbeat_msg),
+            heartbeat_msg[:12],
+        )
 
     async def _heartbeat_loop(self, websocket) -> None:
         interval = Config.HEARTBEAT_INTERVAL_SECONDS
@@ -64,12 +72,14 @@ class Bet365Client:
             logger.warning("Heartbeat disabled because HEARTBEAT_INTERVAL_SECONDS <= 0")
             return
 
+        logger.info("[HEARTBEAT] Loop started (interval=%ss)", interval)
+
         while True:
             await asyncio.sleep(interval)
             try:
-                await self._send_heartbeat(websocket)
-                logger.debug("[HEARTBEAT] Sent keepalive message")
+                await self._send_heartbeat(websocket, source="periodic")
             except asyncio.CancelledError:
+                logger.info("[HEARTBEAT] Loop cancelled")
                 raise
             except Exception as e:
                 HEARTBEAT_ERRORS_TOTAL.inc()
@@ -92,9 +102,11 @@ class Bet365Client:
                 heartbeat_task: asyncio.Task | None = None
 
                 # Send Handshake immediately after connecting to establish the session and keep the connection alive
-                await self._send_heartbeat(websocket)
-                logger.debug("Sent initial handshake/heartbeat message")
-                heartbeat_task = asyncio.create_task(self._heartbeat_loop(websocket))
+                await self._send_heartbeat(websocket, source="initial")
+                if Config.ENABLE_PERIODIC_HEARTBEAT:
+                    heartbeat_task = asyncio.create_task(self._heartbeat_loop(websocket))
+                else:
+                    logger.info("[HEARTBEAT] Periodic heartbeat disabled (initial keepalive only)")
 
                 try:
                     await self._listen(websocket)
@@ -146,7 +158,18 @@ class Bet365Client:
                 self._maybe_log_state_summary()
 
             except websockets.ConnectionClosed as e:
-                logger.error(f"Connection closed: {e}. Reconnecting...")
+                seconds_since_heartbeat: float | None = None
+                if self._last_heartbeat_monotonic is not None:
+                    seconds_since_heartbeat = time.monotonic() - self._last_heartbeat_monotonic
+
+                logger.error(
+                    "Connection closed: code=%s reason=%r rcvd=%s sent=%s since_last_heartbeat=%.2fs. Reconnecting...",
+                    e.code,
+                    e.reason,
+                    e.rcvd,
+                    e.sent,
+                    seconds_since_heartbeat if seconds_since_heartbeat is not None else -1.0,
+                )
                 CONNECTION_UP.set(0)
                 RECONNECTS_TOTAL.inc()
                 break

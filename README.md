@@ -32,7 +32,7 @@ flowchart TD
 - `TOPIC_LOAD` (`\x14`): full topic snapshot, replaces current topic entities.
 - `DELTA` (`\x15`): incremental update, upserts key/value fields into topic state.
 - `CONFIG_100` and handshake responses: tracked/logged but ignored for topic state.
-- periodic keepalive heartbeat messages are sent after connect (same handshake wire format).
+- initial keepalive handshake is sent after connect; periodic app-level heartbeat is optional and disabled by default.
 - stale updates are dropped using sequence (`SEQ/SN/SE`) and topic time (`TI`) checks.
 
 ## Getting Set Up
