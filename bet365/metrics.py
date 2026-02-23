@@ -31,6 +31,21 @@ PARSE_ERRORS_TOTAL = Counter(
     "Total number of message processing errors.",
 )
 
+HEARTBEATS_SENT_TOTAL = Counter(
+    "bet365_heartbeats_sent_total",
+    "Total number of heartbeat messages sent to keep websocket session alive.",
+)
+
+HEARTBEAT_ERRORS_TOTAL = Counter(
+    "bet365_heartbeat_errors_total",
+    "Total number of heartbeat send errors.",
+)
+
+HEARTBEAT_LAST_SENT_UNIX = Gauge(
+    "bet365_heartbeat_last_sent_unix",
+    "Unix timestamp of the most recent successfully sent heartbeat.",
+)
+
 
 def start_metrics_server(port: int) -> None:
     start_http_server(port)

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import time
 
@@ -7,6 +8,9 @@ import websockets
 from .config import Config
 from .metrics import classify_topic
 from .metrics import CONNECTION_UP
+from .metrics import HEARTBEAT_ERRORS_TOTAL
+from .metrics import HEARTBEAT_LAST_SENT_UNIX
+from .metrics import HEARTBEATS_SENT_TOTAL
 from .metrics import MESSAGES_TOTAL
 from .metrics import PARSE_ERRORS_TOTAL
 from .metrics import RECONNECTS_TOTAL
@@ -26,6 +30,7 @@ class Bet365Client:
         self.session_cookie = session_cookie
         self.state_manager = OddsStateManager()
         self._last_state_log_time = 0.0
+        self._last_heartbeat_monotonic: float | None = None
         self.extra_headers = [
             ("Accept-Language", Config.ACCEPT_LANGUAGE)
         ]
@@ -48,32 +53,89 @@ class Bet365Client:
         )
         self._last_state_log_time = now
 
+    async def _send_heartbeat(self, websocket, source: str) -> None:
+        heartbeat_msg = Bet365Parser.create_handshake_message(self.session_cookie)
+        await websocket.send(heartbeat_msg)
+        HEARTBEATS_SENT_TOTAL.inc()
+        HEARTBEAT_LAST_SENT_UNIX.set(time.time())
+        self._last_heartbeat_monotonic = time.monotonic()
+        logger.info(
+            "[HEARTBEAT] Sent keepalive (%s) | payload_len=%s | prefix=%r",
+            source,
+            len(heartbeat_msg),
+            heartbeat_msg[:12],
+        )
+
+    async def _heartbeat_loop(self, websocket) -> None:
+        interval = Config.HEARTBEAT_INTERVAL_SECONDS
+        if interval <= 0:
+            logger.warning("Heartbeat disabled because HEARTBEAT_INTERVAL_SECONDS <= 0")
+            return
+
+        logger.info("[HEARTBEAT] Loop started (interval=%ss)", interval)
+
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await self._send_heartbeat(websocket, source="periodic")
+            except asyncio.CancelledError:
+                logger.info("[HEARTBEAT] Loop cancelled")
+                raise
+            except Exception as e:
+                HEARTBEAT_ERRORS_TOTAL.inc()
+                logger.warning("[HEARTBEAT_ERROR] Failed to send heartbeat: %s", e)
+
     async def connect(self):
         """
-        Establishes the WebSocket connection, sends the handshake, and starts listening.
+        Establishes and maintains the WebSocket connection with reconnects.
         """
-        try:
-            async with websockets.connect(
-                uri=self.url,
-                origin=Config.ORIGIN,
-                subprotocols=[Config.SUBPROTOCOL],
-                user_agent_header=Config.USER_AGENT,
-                additional_headers=self.extra_headers
-            ) as websocket:
-                logger.info("Connected to Bet365 WebSocket.")
-                CONNECTION_UP.set(1)
+        attempt = 0
+        while True:
+            heartbeat_task: asyncio.Task | None = None
+            try:
+                async with websockets.connect(
+                    uri=self.url,
+                    origin=Config.ORIGIN,
+                    subprotocols=[Config.SUBPROTOCOL],
+                    user_agent_header=Config.USER_AGENT,
+                    additional_headers=self.extra_headers,
+                    ping_interval=Config.WEBSOCKET_PING_INTERVAL_SECONDS,
+                    ping_timeout=Config.WEBSOCKET_PING_TIMEOUT_SECONDS,
+                ) as websocket:
+                    logger.info("Connected to Bet365 WebSocket.")
+                    logger.info(
+                        "[WS_KEEPALIVE] ping_interval=%s ping_timeout=%s",
+                        Config.WEBSOCKET_PING_INTERVAL_SECONDS,
+                        Config.WEBSOCKET_PING_TIMEOUT_SECONDS,
+                    )
+                    CONNECTION_UP.set(1)
+                    attempt = 0
 
-                # Send Handshake immediately after connecting to establish the session and keep the connection alive
-                handshake_msg = Bet365Parser.create_handshake_message(self.session_cookie)
-                await websocket.send(handshake_msg)
-                logger.debug(f"Sent handshake: {handshake_msg!r}")
+                    # Send Handshake immediately after connecting to establish the session and keep the connection alive
+                    await self._send_heartbeat(websocket, source="initial")
+                    if Config.ENABLE_PERIODIC_HEARTBEAT:
+                        heartbeat_task = asyncio.create_task(self._heartbeat_loop(websocket))
+                    else:
+                        logger.info("[HEARTBEAT] Periodic heartbeat disabled (initial keepalive only)")
 
-                await self._listen(websocket)
+                    await self._listen(websocket)
 
-        except Exception as e:
-            logger.error(f"Connection failed: {e}")
-            CONNECTION_UP.set(0)
+            except asyncio.CancelledError:
+                CONNECTION_UP.set(0)
+                raise
+            except Exception as e:
+                logger.error("Connection failed: %s", e)
+            finally:
+                CONNECTION_UP.set(0)
+                if heartbeat_task is not None:
+                    heartbeat_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await heartbeat_task
+
+            attempt += 1
             RECONNECTS_TOTAL.inc()
+            logger.info("Reconnecting in %ss (attempt=%s)", Config.RECONNECT_DELAY_SECONDS, attempt)
+            await asyncio.sleep(Config.RECONNECT_DELAY_SECONDS)
 
     async def _listen(self, websocket):
         """
@@ -112,9 +174,18 @@ class Bet365Client:
                 self._maybe_log_state_summary()
 
             except websockets.ConnectionClosed as e:
-                logger.error(f"Connection closed: {e}. Reconnecting...")
-                CONNECTION_UP.set(0)
-                RECONNECTS_TOTAL.inc()
+                seconds_since_heartbeat: float | None = None
+                if self._last_heartbeat_monotonic is not None:
+                    seconds_since_heartbeat = time.monotonic() - self._last_heartbeat_monotonic
+
+                logger.error(
+                    "Connection closed: code=%s reason=%r rcvd=%s sent=%s since_last_heartbeat=%.2fs.",
+                    e.code,
+                    e.reason,
+                    e.rcvd,
+                    e.sent,
+                    seconds_since_heartbeat if seconds_since_heartbeat is not None else -1.0,
+                )
                 break
             except Exception as e:
                 logger.error(f"Error while processing websocket message: {e}")

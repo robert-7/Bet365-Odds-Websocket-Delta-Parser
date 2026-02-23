@@ -2,6 +2,39 @@
 
 A Python script that connects to Bet365's live odds WebSocket, maintains the session with heartbeats, listens for real-time odds deltas, parses updates into human-readable events, and prints them to the console (with run instructions and implementation notes).
 
+## Quick Mental Model
+
+At a high level, this app does three things continuously:
+
+1. Connects to the Bet365 websocket and keeps the session alive.
+1. Parses incoming protocol messages into structured message objects.
+1. Applies snapshot/delta updates into in-memory topic state, while exposing metrics and a read-only state endpoint.
+
+For a deeper module-level breakdown, see `bet365/README.md`.
+
+## Architecture Overview
+
+```mermaid
+flowchart TD
+    A[Bet365 WebSocket Server] --> B[Bet365Client<br/>client.py]
+    B --> C[Bet365Parser<br/>parser.py]
+    C --> B
+    B --> D[OddsStateManager<br/>state_manager.py]
+    B --> E[Prometheus Metrics<br/>metrics.py -> /metrics]
+    D --> F[State HTTP Server<br/>state_server.py -> /state]
+    B --> H[Heartbeat Loop<br/>every 20s keepalive]
+    H --> A
+    G[Grafana + Prometheus<br/>docker-compose] --> E
+```
+
+### Message Handling Summary
+
+- `TOPIC_LOAD` (`\x14`): full topic snapshot, replaces current topic entities.
+- `DELTA` (`\x15`): incremental update, upserts key/value fields into topic state.
+- `CONFIG_100` and handshake responses: tracked/logged but ignored for topic state.
+- initial keepalive handshake is sent after connect; periodic app-level heartbeat is optional and disabled by default.
+- stale updates are dropped using sequence (`SEQ/SN/SE`) and topic time (`TI`) checks.
+
 ## Getting Set Up
 
 The steps below should help you get set up virtualenv on an Ubuntu system.
@@ -68,8 +101,12 @@ docker-compose up -d
 ### Useful PromQL examples
 
 - Total message rate by message type:
-	- `sum by (type) (rate(bet365_messages_total[1m]))`
+    - `sum by (type) (rate(bet365_messages_total[1m]))`
 - Topic hit rate:
-	- `sum by (topic) (rate(bet365_topic_messages_total[1m]))`
+    - `sum by (topic) (rate(bet365_topic_messages_total[1m]))`
 - Topic-class hit rate:
-	- `sum by (topic_class) (rate(bet365_topic_messages_total[1m]))`
+    - `sum by (topic_class) (rate(bet365_topic_messages_total[1m]))`
+- Heartbeat send rate:
+    - `sum(rate(bet365_heartbeats_sent_total[1m]))`
+- Heartbeat errors in last 5m:
+    - `increase(bet365_heartbeat_errors_total[5m])`
