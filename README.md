@@ -70,12 +70,10 @@ python3 main.py
 
 ### View live internal state
 
-- Browser: `http://localhost:8002/state`
-- Curl:
+There are a few methods to view the internal state:
 
-```shell
-curl -s http://localhost:8002/state | jq
-```
+- Browser: `http://localhost:8002/state`
+- Curl: `curl -s http://localhost:8002/state | jq '.'`
 
 ### Start monitoring stack
 
