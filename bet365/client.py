@@ -95,9 +95,16 @@ class Bet365Client:
                 origin=Config.ORIGIN,
                 subprotocols=[Config.SUBPROTOCOL],
                 user_agent_header=Config.USER_AGENT,
-                additional_headers=self.extra_headers
+                additional_headers=self.extra_headers,
+                ping_interval=Config.WEBSOCKET_PING_INTERVAL_SECONDS,
+                ping_timeout=Config.WEBSOCKET_PING_TIMEOUT_SECONDS,
             ) as websocket:
                 logger.info("Connected to Bet365 WebSocket.")
+                logger.info(
+                    "[WS_KEEPALIVE] ping_interval=%s ping_timeout=%s",
+                    Config.WEBSOCKET_PING_INTERVAL_SECONDS,
+                    Config.WEBSOCKET_PING_TIMEOUT_SECONDS,
+                )
                 CONNECTION_UP.set(1)
                 heartbeat_task: asyncio.Task | None = None
 
