@@ -53,6 +53,33 @@ class Bet365Client:
         )
         self._last_state_log_time = now
 
+    def _topic_key_values_snapshot(self, topic: str) -> dict[str, str]:
+        topic_state = self.state_manager.topics.get(topic)
+        if topic_state is None or not isinstance(topic_state.entities, dict):
+            return {}
+
+        key_values = topic_state.entities.get("key_values")
+        if not isinstance(key_values, dict):
+            return {}
+
+        return {str(key): str(value) for key, value in key_values.items()}
+
+    def _delta_change_summary(self, before: dict[str, str], after: dict[str, str], limit: int = 6) -> tuple[int, str]:
+        changed_keys = sorted({*before.keys(), *after.keys()})
+        changed_keys = [key for key in changed_keys if before.get(key) != after.get(key)]
+
+        if not changed_keys:
+            return 0, ""
+
+        entries: list[str] = []
+        for key in changed_keys[:limit]:
+            entries.append(f"{key}: {before.get(key, '<missing>')} -> {after.get(key, '<missing>')}")
+
+        if len(changed_keys) > limit:
+            entries.append(f"... +{len(changed_keys) - limit} more")
+
+        return len(changed_keys), "; ".join(entries)
+
     async def _send_heartbeat(self, websocket, source: str) -> None:
         heartbeat_msg = Bet365Parser.create_handshake_message(self.session_cookie)
         await websocket.send(heartbeat_msg)
@@ -150,6 +177,13 @@ class Bet365Client:
                 for pm in parsed_messages:
                     message_type = pm.get("type", "UNKNOWN")
                     MESSAGES_TOTAL.labels(type=message_type).inc()
+
+                    before_values: dict[str, str] = {}
+                    if message_type == "DELTA":
+                        topic = pm.get("topic")
+                        if isinstance(topic, str):
+                            before_values = self._topic_key_values_snapshot(topic)
+
                     self.state_manager.apply_message(pm)
 
                     if pm['type'] == 'CONFIG_100':
@@ -166,6 +200,18 @@ class Bet365Client:
                         topic_class = classify_topic(pm["topic"])
                         TOPIC_MESSAGES_TOTAL.labels(topic_class=topic_class, topic=pm["topic"]).inc()
                         logger.info(f"[DELTA] Topic: {pm['topic']} | Diff Len: {len(pm['diff'])}")
+
+                        after_values = self._topic_key_values_snapshot(pm["topic"])
+                        changed_count, changed_summary = self._delta_change_summary(before_values, after_values)
+                        if changed_count > 0:
+                            logger.info(
+                                "[DELTA_APPLIED] Topic: %s | Changed Keys: %s | %s",
+                                pm["topic"],
+                                changed_count,
+                                changed_summary,
+                            )
+                        else:
+                            logger.info("[DELTA_APPLIED] Topic: %s | No key-value changes", pm["topic"])
                     elif pm['type'] == 'HANDSHAKE_RESPONSE':
                         logger.info(f"[HANDSHAKE_ACK] {pm['payload']}")
                     else:
