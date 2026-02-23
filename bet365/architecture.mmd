@@ -1,4 +1,7 @@
 flowchart TD
+    A0[Connected websocket] --> A1[Heartbeat loop every interval]
+    A1 --> A2[Send keepalive handshake payload]
+
     A[WebSocket frame received] --> B[Bet365Parser.parse_message]
     B --> C{Parsed message type}
 
@@ -20,6 +23,7 @@ flowchart TD
 
     K --> Q[Update topic metadata and counters]
     O --> Q
+    A2 --> Q
     D --> Q
     E --> Q
     H --> Q

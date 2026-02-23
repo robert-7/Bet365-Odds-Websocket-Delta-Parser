@@ -7,6 +7,7 @@ If you're new to the protocol, the key idea is:
 - `TOPIC_LOAD` gives a full snapshot for a topic (baseline state).
 - `DELTA` gives incremental updates for that topic (patches).
 - control-plane messages (`CONFIG_100`, handshake responses) are tracked but not applied to topic state.
+- a periodic heartbeat keepalive is sent after connect to keep the websocket session active.
 
 ## What Message Types Are We Listening To
 
@@ -24,6 +25,9 @@ The parser (`parser.py`) converts raw frame content into one or more structured 
 
 ```mermaid
 flowchart TD
+    A0[Connected websocket] --> A1[Heartbeat loop every interval]
+    A1 --> A2[Send keepalive handshake payload]
+
     A[WebSocket frame received] --> B[Bet365Parser.parse_message]
     B --> C{Parsed message type}
 
@@ -45,6 +49,7 @@ flowchart TD
 
     K --> Q[Update topic metadata and counters]
     O --> Q
+    A2 --> Q
     D --> Q
     E --> Q
     H --> Q
@@ -55,6 +60,7 @@ flowchart TD
 - `client.py`
     - Owns the websocket lifecycle (connect, listen, reconnect/error counters).
     - Sends the initial handshake built by `Bet365Parser.create_handshake_message(...)`.
+    - Runs a periodic heartbeat loop (same keepalive payload) using `Config.HEARTBEAT_INTERVAL_SECONDS`.
     - Parses each frame, emits metrics, and forwards parsed messages to `OddsStateManager.apply_message(...)`.
 - `parser.py`
     - Splits concatenated frame payloads (`\x08`) into individual protocol messages.
@@ -68,6 +74,7 @@ flowchart TD
     - Exposes `snapshot()` and `topic_summaries()` for observability.
 - `metrics.py`
     - Defines Prometheus counters/gauges (message totals, topic totals, reconnects, parse errors, connection up/down).
+    - Tracks heartbeat send count, heartbeat errors, and last successful heartbeat timestamp.
 - `state_server.py`
     - Exposes read-only JSON at `/state` for live internal state inspection.
 - `constants.py`
@@ -94,6 +101,7 @@ flowchart LR
     subgraph Runtime
         WS[Bet365 WebSocket]
         C[client.py<br/>Bet365Client]
+        HB[heartbeat loop<br/>periodic keepalive]
         P[parser.py<br/>Bet365Parser]
         S[state_manager.py<br/>OddsStateManager]
         M[metrics.py<br/>Prometheus metrics]
@@ -101,6 +109,8 @@ flowchart LR
     end
 
     WS --> C
+    C --> HB
+    HB --> WS
     C --> P
     P --> C
     C --> S

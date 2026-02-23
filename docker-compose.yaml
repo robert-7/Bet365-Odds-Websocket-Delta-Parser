@@ -4,10 +4,12 @@ services:
     image: prom/prometheus:latest
     container_name: bet365-prometheus
     restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yaml
     ports:
       - "9090:9090"
     volumes:
-      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
     extra_hosts:
       - "host.docker.internal:host-gateway"
 

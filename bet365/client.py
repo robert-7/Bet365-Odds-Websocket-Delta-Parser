@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import time
 
@@ -7,6 +8,9 @@ import websockets
 from .config import Config
 from .metrics import classify_topic
 from .metrics import CONNECTION_UP
+from .metrics import HEARTBEAT_ERRORS_TOTAL
+from .metrics import HEARTBEAT_LAST_SENT_UNIX
+from .metrics import HEARTBEATS_SENT_TOTAL
 from .metrics import MESSAGES_TOTAL
 from .metrics import PARSE_ERRORS_TOTAL
 from .metrics import RECONNECTS_TOTAL
@@ -48,6 +52,29 @@ class Bet365Client:
         )
         self._last_state_log_time = now
 
+    async def _send_heartbeat(self, websocket) -> None:
+        heartbeat_msg = Bet365Parser.create_handshake_message(self.session_cookie)
+        await websocket.send(heartbeat_msg)
+        HEARTBEATS_SENT_TOTAL.inc()
+        HEARTBEAT_LAST_SENT_UNIX.set(time.time())
+
+    async def _heartbeat_loop(self, websocket) -> None:
+        interval = Config.HEARTBEAT_INTERVAL_SECONDS
+        if interval <= 0:
+            logger.warning("Heartbeat disabled because HEARTBEAT_INTERVAL_SECONDS <= 0")
+            return
+
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await self._send_heartbeat(websocket)
+                logger.debug("[HEARTBEAT] Sent keepalive message")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                HEARTBEAT_ERRORS_TOTAL.inc()
+                logger.warning("[HEARTBEAT_ERROR] Failed to send heartbeat: %s", e)
+
     async def connect(self):
         """
         Establishes the WebSocket connection, sends the handshake, and starts listening.
@@ -62,13 +89,20 @@ class Bet365Client:
             ) as websocket:
                 logger.info("Connected to Bet365 WebSocket.")
                 CONNECTION_UP.set(1)
+                heartbeat_task: asyncio.Task | None = None
 
                 # Send Handshake immediately after connecting to establish the session and keep the connection alive
-                handshake_msg = Bet365Parser.create_handshake_message(self.session_cookie)
-                await websocket.send(handshake_msg)
-                logger.debug(f"Sent handshake: {handshake_msg!r}")
+                await self._send_heartbeat(websocket)
+                logger.debug("Sent initial handshake/heartbeat message")
+                heartbeat_task = asyncio.create_task(self._heartbeat_loop(websocket))
 
-                await self._listen(websocket)
+                try:
+                    await self._listen(websocket)
+                finally:
+                    if heartbeat_task is not None:
+                        heartbeat_task.cancel()
+                        with contextlib.suppress(asyncio.CancelledError):
+                            await heartbeat_task
 
         except Exception as e:
             logger.error(f"Connection failed: {e}")

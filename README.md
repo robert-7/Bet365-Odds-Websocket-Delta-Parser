@@ -22,6 +22,8 @@ flowchart TD
     B --> D[OddsStateManager<br/>state_manager.py]
     B --> E[Prometheus Metrics<br/>metrics.py -> /metrics]
     D --> F[State HTTP Server<br/>state_server.py -> /state]
+    B --> H[Heartbeat Loop<br/>every 20s keepalive]
+    H --> A
     G[Grafana + Prometheus<br/>docker-compose] --> E
 ```
 
@@ -30,6 +32,7 @@ flowchart TD
 - `TOPIC_LOAD` (`\x14`): full topic snapshot, replaces current topic entities.
 - `DELTA` (`\x15`): incremental update, upserts key/value fields into topic state.
 - `CONFIG_100` and handshake responses: tracked/logged but ignored for topic state.
+- periodic keepalive heartbeat messages are sent after connect (same handshake wire format).
 - stale updates are dropped using sequence (`SEQ/SN/SE`) and topic time (`TI`) checks.
 
 ## Getting Set Up
@@ -103,3 +106,7 @@ docker-compose up -d
     - `sum by (topic) (rate(bet365_topic_messages_total[1m]))`
 - Topic-class hit rate:
     - `sum by (topic_class) (rate(bet365_topic_messages_total[1m]))`
+- Heartbeat send rate:
+    - `sum(rate(bet365_heartbeats_sent_total[1m]))`
+- Heartbeat errors in last 5m:
+    - `increase(bet365_heartbeat_errors_total[5m])`
