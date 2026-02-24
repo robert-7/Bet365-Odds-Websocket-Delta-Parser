@@ -114,7 +114,10 @@ class Bet365Client:
                     await self._send_heartbeat(websocket, source="initial")
 
                     # Subscribe to topics (e.g., In-Play overview to get game odds)
-                    # You can change these topics based on what you need (e.g., specific match IDs)
+                    # These topics are standard for the Bet365 In-Play page:
+                    # - CONFIG_1_3: The sports tree and site configuration (Language 1=English, Odds 3=Decimal)
+                    # - OVInPlay_1_3: The high-level overview of all currently live matches and their main odds
+                    # - Media_L1_Z3: Live match statistics and pitch animations
                     topics_to_subscribe = ["CONFIG_1_3", "OVInPlay_1_3", "Media_L1_Z3"]
                     subscribe_msg = Bet365Parser.create_subscribe_message(topics_to_subscribe)
                     await websocket.send(subscribe_msg)

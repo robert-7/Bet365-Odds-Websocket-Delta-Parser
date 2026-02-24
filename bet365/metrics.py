@@ -58,6 +58,10 @@ def classify_topic(topic: str) -> str:
         return "session"
     if topic.startswith("OV"):
         return "overview"
+    if topic.startswith("CONFIG"):
+        return "config"
+    if re.match(r"^[0-9]+V", topic) or topic.startswith("EV"):
+        return "event_match"
     if re.match(r"^[A-Za-z]+_", topic):
         return "named"
     return "other"
