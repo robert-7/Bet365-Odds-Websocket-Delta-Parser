@@ -112,6 +112,14 @@ class Bet365Client:
 
                     # Send Handshake immediately after connecting to establish the session and keep the connection alive
                     await self._send_heartbeat(websocket, source="initial")
+
+                    # Subscribe to topics (e.g., In-Play overview to get game odds)
+                    # You can change these topics based on what you need (e.g., specific match IDs)
+                    topics_to_subscribe = ["CONFIG_1_3", "OVInPlay_1_3", "Media_L1_Z3"]
+                    subscribe_msg = Bet365Parser.create_subscribe_message(topics_to_subscribe)
+                    await websocket.send(subscribe_msg)
+                    logger.info(f"[SUBSCRIBE] Sent subscription for topics: {topics_to_subscribe}")
+
                     if Config.ENABLE_PERIODIC_HEARTBEAT:
                         heartbeat_task = asyncio.create_task(self._heartbeat_loop(websocket))
                     else:

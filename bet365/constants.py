@@ -9,6 +9,7 @@ class ProtocolConstants(StrEnum):
     """
     TOPIC_LOAD = "\x14"   # (20) Initial Topic Load (Snapshot)
     DELTA = "\x15"        # (21) Delta Update (Diff)
+    SUBSCRIBE = "\x16"    # (22) Subscribe to topics
     HANDSHAKE = "\x23"    # (35) Handshake
 
 class Delimiters(StrEnum):

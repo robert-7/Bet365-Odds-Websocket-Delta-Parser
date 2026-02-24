@@ -15,6 +15,15 @@ class Bet365Parser:
         return f"{ProtocolConstants.HANDSHAKE}{Delimiters.HANDSHAKE}P{Delimiters.RECORD}__time,S_{session_id}{Delimiters.NULL}"
 
     @staticmethod
+    def create_subscribe_message(topics: list[str]) -> str:
+        """
+        Constructs a message to subscribe to specific topics (e.g., game odds).
+        Format: \x16\x00{topic_1},{topic_2}\x01
+        """
+        topic_string = ",".join(topics)
+        return f"{ProtocolConstants.SUBSCRIBE}{Delimiters.NULL}{topic_string}{Delimiters.RECORD}"
+
+    @staticmethod
     def parse_message(message: str) -> list[dict]:
         """
         Parses the raw message string from the WebSocket into a list of structured dictionaries.

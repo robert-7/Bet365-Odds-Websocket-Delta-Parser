@@ -7,7 +7,16 @@ If you're new to the protocol, the key idea is:
 - `TOPIC_LOAD` gives a full snapshot for a topic (baseline state).
 - `DELTA` gives incremental updates for that topic (patches).
 - control-plane messages (`CONFIG_100`, handshake responses) are tracked but not applied to topic state.
-- an initial keepalive handshake is sent after connect; periodic app-level heartbeat is configurable and disabled by default.
+- an initial keepalive handshake is sent after connect, followed by a `SUBSCRIBE` message to request topic data; periodic app-level heartbeat is configurable and disabled by default.
+
+## What Messages Are We Sending
+
+The client actively sends messages to establish the session and request data:
+
+| Type | Leading Byte | Purpose |
+|---|---|---|
+| `HANDSHAKE` | `\x23` | Initial keepalive and session establishment. |
+| `SUBSCRIBE` | `\x16` | Requests data for specific topics (e.g., `OVInPlay_1_3`, `6V1C...`). |
 
 ## What Message Types Are We Listening To
 
@@ -25,7 +34,9 @@ The parser (`parser.py`) converts raw frame content into one or more structured 
 
 ```mermaid
 flowchart TD
-    A0[Connected websocket] --> A1[Heartbeat loop every interval]
+    A0[Connected websocket] --> A0_1[Send initial handshake]
+    A0_1 --> A0_2[Send SUBSCRIBE message]
+    A0_2 --> A1[Heartbeat loop every interval]
     A1 --> A2[Send keepalive handshake payload]
 
     A[WebSocket frame received] --> B[Bet365Parser.parse_message]
@@ -60,6 +71,7 @@ flowchart TD
 - `client.py`
     - Owns the websocket lifecycle (connect, listen, reconnect/error counters).
     - Sends the initial handshake built by `Bet365Parser.create_handshake_message(...)`.
+    - Sends the subscription message built by `Bet365Parser.create_subscribe_message(...)`.
     - Can run a periodic heartbeat loop (same keepalive payload) via `Config.ENABLE_PERIODIC_HEARTBEAT` and `Config.HEARTBEAT_INTERVAL_SECONDS`.
     - Parses each frame, emits metrics, and forwards parsed messages to `OddsStateManager.apply_message(...)`.
 - `parser.py`
