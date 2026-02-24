@@ -5,6 +5,7 @@ import time
 
 import websockets
 
+from . import output
 from .config import Config
 from .metrics import classify_topic
 from .metrics import CONNECTION_UP
@@ -42,17 +43,7 @@ class Bet365Client:
 
         summary = self.state_manager.snapshot()
         top_topics = self.state_manager.topic_summaries(limit=3)
-        logger.info(
-            "[STATE] topics=%s handled=%s ignored=%s(config=%s,handshake=%s) unknown=%s stale_dropped=%s top=%s",
-            summary["topic_count"],
-            summary["handled_messages"],
-            summary["ignored_messages"],
-            summary["ignored_config"],
-            summary["ignored_handshake_response"],
-            summary["unknown_types"],
-            summary["out_of_order_dropped"],
-            top_topics,
-        )
+        output.log_state_summary(logger, summary, top_topics)
         self._last_state_log_time = now
 
     def _topic_key_values_snapshot(self, topic: str) -> dict[str, str]:
@@ -66,53 +57,32 @@ class Bet365Client:
 
         return {str(key): str(value) for key, value in key_values.items()}
 
-    def _delta_change_summary(self, before: dict[str, str], after: dict[str, str], limit: int = 6) -> tuple[int, str]:
-        changed_keys = sorted({*before.keys(), *after.keys()})
-        changed_keys = [key for key in changed_keys if before.get(key) != after.get(key)]
-
-        if not changed_keys:
-            return 0, ""
-
-        entries: list[str] = []
-        for key in changed_keys[:limit]:
-            entries.append(f"{key}: {before.get(key, '<missing>')} -> {after.get(key, '<missing>')}")
-
-        if len(changed_keys) > limit:
-            entries.append(f"... +{len(changed_keys) - limit} more")
-
-        return len(changed_keys), "; ".join(entries)
-
     async def _send_heartbeat(self, websocket, source: str) -> None:
         heartbeat_msg = Bet365Parser.create_handshake_message(self.session_cookie)
         await websocket.send(heartbeat_msg)
         HEARTBEATS_SENT_TOTAL.inc()
         HEARTBEAT_LAST_SENT_UNIX.set(time.time())
         self._last_heartbeat_monotonic = time.monotonic()
-        logger.info(
-            "[HEARTBEAT] Sent keepalive (%s) | payload_len=%s | prefix=%r",
-            source,
-            len(heartbeat_msg),
-            heartbeat_msg[:12],
-        )
+        output.log_heartbeat_sent(logger, source, len(heartbeat_msg), heartbeat_msg[:12])
 
     async def _heartbeat_loop(self, websocket) -> None:
         interval = Config.HEARTBEAT_INTERVAL_SECONDS
         if interval <= 0:
-            logger.warning("Heartbeat disabled because HEARTBEAT_INTERVAL_SECONDS <= 0")
+            output.log_heartbeat_disabled_interval(logger)
             return
 
-        logger.info("[HEARTBEAT] Loop started (interval=%ss)", interval)
+        output.log_heartbeat_loop_started(logger, interval)
 
         while True:
             await asyncio.sleep(interval)
             try:
                 await self._send_heartbeat(websocket, source="periodic")
             except asyncio.CancelledError:
-                logger.info("[HEARTBEAT] Loop cancelled")
+                output.log_heartbeat_loop_cancelled(logger)
                 raise
             except Exception as e:
                 HEARTBEAT_ERRORS_TOTAL.inc()
-                logger.warning("[HEARTBEAT_ERROR] Failed to send heartbeat: %s", e)
+                output.log_heartbeat_error(logger, e)
 
     async def connect(self):
         """
@@ -131,9 +101,9 @@ class Bet365Client:
                     ping_interval=Config.WEBSOCKET_PING_INTERVAL_SECONDS,
                     ping_timeout=Config.WEBSOCKET_PING_TIMEOUT_SECONDS,
                 ) as websocket:
-                    logger.info("Connected to Bet365 WebSocket.")
-                    logger.info(
-                        "[WS_KEEPALIVE] ping_interval=%s ping_timeout=%s",
+                    output.log_connected(logger)
+                    output.log_ws_keepalive(
+                        logger,
                         Config.WEBSOCKET_PING_INTERVAL_SECONDS,
                         Config.WEBSOCKET_PING_TIMEOUT_SECONDS,
                     )
@@ -145,7 +115,7 @@ class Bet365Client:
                     if Config.ENABLE_PERIODIC_HEARTBEAT:
                         heartbeat_task = asyncio.create_task(self._heartbeat_loop(websocket))
                     else:
-                        logger.info("[HEARTBEAT] Periodic heartbeat disabled (initial keepalive only)")
+                        output.log_heartbeat_disabled_periodic(logger)
 
                     await self._listen(websocket)
 
@@ -153,7 +123,7 @@ class Bet365Client:
                 CONNECTION_UP.set(0)
                 raise
             except Exception as e:
-                logger.error("Connection failed: %s", e)
+                output.log_connection_failed(logger, e)
             finally:
                 CONNECTION_UP.set(0)
                 if heartbeat_task is not None:
@@ -163,7 +133,7 @@ class Bet365Client:
 
             attempt += 1
             RECONNECTS_TOTAL.inc()
-            logger.info("Reconnecting in %ss (attempt=%s)", Config.RECONNECT_DELAY_SECONDS, attempt)
+            output.log_reconnecting(logger, Config.RECONNECT_DELAY_SECONDS, attempt)
             await asyncio.sleep(Config.RECONNECT_DELAY_SECONDS)
 
     async def _listen(self, websocket):
@@ -201,19 +171,8 @@ class Bet365Client:
                     elif pm['type'] == 'DELTA':
                         topic_class = classify_topic(pm["topic"])
                         TOPIC_MESSAGES_TOTAL.labels(topic_class=topic_class, topic=pm["topic"]).inc()
-                        logger.info(f"[DELTA] Topic: {pm['topic']} | Diff Len: {len(pm['diff'])}")
-
                         after_values = self._topic_key_values_snapshot(pm["topic"])
-                        changed_count, changed_summary = self._delta_change_summary(before_values, after_values)
-                        if changed_count > 0:
-                            logger.info(
-                                "[DELTA_APPLIED] Topic: %s | Changed Keys: %s | %s",
-                                pm["topic"],
-                                changed_count,
-                                changed_summary,
-                            )
-                        else:
-                            logger.info("[DELTA_APPLIED] Topic: %s | No key-value changes", pm["topic"])
+                        output.log_delta(logger, pm["topic"], len(pm["diff"]), before_values, after_values)
                     elif pm['type'] == 'HANDSHAKE_RESPONSE':
                         logger.info(f"[HANDSHAKE_ACK] {pm['payload']}")
                     else:
@@ -226,8 +185,8 @@ class Bet365Client:
                 if self._last_heartbeat_monotonic is not None:
                     seconds_since_heartbeat = time.monotonic() - self._last_heartbeat_monotonic
 
-                logger.error(
-                    "Connection closed: code=%s reason=%r rcvd=%s sent=%s since_last_heartbeat=%.2fs.",
+                output.log_connection_closed(
+                    logger,
                     e.code,
                     e.reason,
                     e.rcvd,
