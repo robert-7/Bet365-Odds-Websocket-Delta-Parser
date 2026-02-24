@@ -17,6 +17,8 @@ class OddsStateManagerTests(unittest.TestCase):
 
         self.assertEqual(manager.handled_messages, 1)
         self.assertEqual(manager.ignored_messages, 0)
+        self.assertEqual(manager.ignored_config, 0)
+        self.assertEqual(manager.ignored_handshake_response, 0)
         self.assertEqual(manager.unknown_types, 0)
 
         self.assertIn("__time", manager.topics)
@@ -58,6 +60,8 @@ class OddsStateManagerTests(unittest.TestCase):
 
         self.assertEqual(manager.handled_messages, 0)
         self.assertEqual(manager.ignored_messages, 2)
+        self.assertEqual(manager.ignored_config, 1)
+        self.assertEqual(manager.ignored_handshake_response, 1)
         self.assertEqual(manager.unknown_types, 0)
         self.assertEqual(manager.topics, {})
 
@@ -69,6 +73,8 @@ class OddsStateManagerTests(unittest.TestCase):
 
         self.assertEqual(manager.handled_messages, 0)
         self.assertEqual(manager.ignored_messages, 0)
+        self.assertEqual(manager.ignored_config, 0)
+        self.assertEqual(manager.ignored_handshake_response, 0)
         self.assertEqual(manager.unknown_types, 2)
 
     def test_topic_metadata_changes_and_increments(self):
@@ -218,6 +224,8 @@ class OddsStateManagerTests(unittest.TestCase):
 
         snapshot = manager.snapshot()
         self.assertEqual(snapshot["topic_count"], 1)
+        self.assertIn("ignored_config", snapshot)
+        self.assertIn("ignored_handshake_response", snapshot)
         self.assertIn("topics", snapshot)
         self.assertIn("__time", snapshot["topics"])
         self.assertIn("last_update_utc", snapshot["topics"]["__time"])

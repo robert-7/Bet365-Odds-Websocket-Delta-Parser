@@ -43,10 +43,12 @@ class Bet365Client:
         summary = self.state_manager.snapshot()
         top_topics = self.state_manager.topic_summaries(limit=3)
         logger.info(
-            "[STATE] topics=%s handled=%s ignored=%s unknown=%s stale_dropped=%s top=%s",
+            "[STATE] topics=%s handled=%s ignored=%s(config=%s,handshake=%s) unknown=%s stale_dropped=%s top=%s",
             summary["topic_count"],
             summary["handled_messages"],
             summary["ignored_messages"],
+            summary["ignored_config"],
+            summary["ignored_handshake_response"],
             summary["unknown_types"],
             summary["out_of_order_dropped"],
             top_topics,

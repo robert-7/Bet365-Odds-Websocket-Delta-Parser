@@ -40,6 +40,8 @@ class OddsStateManager:
     topics: dict[str, TopicState] = field(default_factory=dict)
     handled_messages: int = 0
     ignored_messages: int = 0
+    ignored_config: int = 0
+    ignored_handshake_response: int = 0
     unknown_types: int = 0
     delta_ops_applied: int = 0
     delta_ops_skipped: int = 0
@@ -85,6 +87,8 @@ class OddsStateManager:
         return {
             "handled_messages": self.handled_messages,
             "ignored_messages": self.ignored_messages,
+            "ignored_config": self.ignored_config,
+            "ignored_handshake_response": self.ignored_handshake_response,
             "unknown_types": self.unknown_types,
             "delta_ops_applied": self.delta_ops_applied,
             "delta_ops_skipped": self.delta_ops_skipped,
@@ -153,7 +157,12 @@ class OddsStateManager:
             self.malformed_messages += 1
         # CONFIG_100 and HANDSHAKE_RESPONSE are connection/control-plane events,
         # not odds/topic state updates, so we intentionally ignore them for now.
-        elif message_type in {"CONFIG_100", "HANDSHAKE_RESPONSE"}:
+        elif message_type == "CONFIG_100":
+            self.ignored_config += 1
+            self.ignored_messages += 1
+            return
+        elif message_type == "HANDSHAKE_RESPONSE":
+            self.ignored_handshake_response += 1
             self.ignored_messages += 1
             return
 
