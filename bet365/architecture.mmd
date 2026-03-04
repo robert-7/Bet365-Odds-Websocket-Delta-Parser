@@ -1,5 +1,7 @@
 flowchart TD
-    A0[Connected websocket] --> A1[Heartbeat loop every interval]
+    A0[Connected websocket] --> A0_1[Send initial handshake]
+    A0_1 --> A0_2[Send SUBSCRIBE message]
+    A0_2 --> A1[Heartbeat loop every interval]
     A1 --> A2[Send keepalive handshake payload]
 
     A[WebSocket frame received] --> B[Bet365Parser.parse_message]
